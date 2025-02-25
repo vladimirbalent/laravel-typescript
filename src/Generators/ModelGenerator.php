@@ -4,8 +4,6 @@ namespace Based\TypeScript\Generators;
 
 use Based\TypeScript\Definitions\TypeScriptProperty;
 use Based\TypeScript\Definitions\TypeScriptType;
-use Doctrine\DBAL\Schema\Column;
-use Doctrine\DBAL\Types\Types;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -19,7 +17,7 @@ use Illuminate\Database\Eloquent\Relations\MorphToMany;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use ReflectionClass;
 use ReflectionMethod;
 use Throwable;
@@ -27,13 +25,11 @@ use Throwable;
 class ModelGenerator extends AbstractGenerator
 {
     protected Model $model;
-    /** @var Collection<Column> */
+    /** @var Collection */
     protected Collection $columns;
 
     public function __construct()
     {
-        // Enums aren't supported by DBAL, so map enum columns to string.
-        DB::getDoctrineSchemaManager()->getDatabasePlatform()->registerDoctrineTypeMapping('enum', 'string');
     }
 
     public function getDefinition(): ?string
@@ -49,27 +45,22 @@ class ModelGenerator extends AbstractGenerator
     }
 
     /**
-     * @throws \Doctrine\DBAL\Exception
      * @throws \ReflectionException
      */
     protected function boot(): void
     {
         $this->model = $this->reflection->newInstance();
 
-        $this->columns = collect(
-            $this->model->getConnection()
-                ->getDoctrineSchemaManager()
-                ->listTableColumns($this->model->getConnection()->getTablePrefix() . $this->model->getTable())
-        );
+        $this->columns = collect(Schema::getColumns($this->model->getTable()));
     }
 
     protected function getProperties(): string
     {
-        return $this->columns->map(function (Column $column) {
+        return $this->columns->map(function ($column) {
             return (string) new TypeScriptProperty(
-                name: $column->getName(),
-                types: $this->getPropertyType($column->getType()->getName()),
-                nullable: !$column->getNotnull()
+                name: $column['name'],
+                types: $this->getPropertyType($column['type_name']),
+                nullable: $column['nullable']
             );
         })
             ->join(PHP_EOL . '        ');
@@ -93,7 +84,7 @@ class ModelGenerator extends AbstractGenerator
                 return [$property => $method];
             })
             ->reject(function (ReflectionMethod $method, string $property) {
-                return $this->columns->contains(fn (Column $column) => $column->getName() == $property);
+                return $this->columns->contains(fn ($column) => $column['name'] == $property);
             })
             ->reject(function (ReflectionMethod $method, string $property) use ($relationsToSkip) {
                 return $relationsToSkip->contains($property);
@@ -169,31 +160,9 @@ class ModelGenerator extends AbstractGenerator
     protected function getPropertyType(string $type): string|array
     {
         return match ($type) {
-            Types::ARRAY => [TypeScriptType::array(), TypeScriptType::ANY],
-            Types::ASCII_STRING => TypeScriptType::STRING,
-            Types::BIGINT => TypeScriptType::NUMBER,
-            Types::BINARY => TypeScriptType::STRING,
-            Types::BLOB => TypeScriptType::STRING,
-            Types::BOOLEAN => TypeScriptType::BOOLEAN,
-            Types::DATE_MUTABLE => TypeScriptType::STRING,
-            Types::DATE_IMMUTABLE => TypeScriptType::STRING,
-            Types::DATEINTERVAL => TypeScriptType::STRING,
-            Types::DATETIME_MUTABLE => TypeScriptType::STRING,
-            Types::DATETIME_IMMUTABLE => TypeScriptType::STRING,
-            Types::DATETIMETZ_MUTABLE => TypeScriptType::STRING,
-            Types::DATETIMETZ_IMMUTABLE => TypeScriptType::STRING,
-            Types::DECIMAL => TypeScriptType::NUMBER,
-            Types::FLOAT => TypeScriptType::NUMBER,
-            Types::GUID => TypeScriptType::STRING,
-            Types::INTEGER => TypeScriptType::NUMBER,
-            Types::JSON => [TypeScriptType::array(), TypeScriptType::ANY],
-            Types::OBJECT => TypeScriptType::ANY,
-            Types::SIMPLE_ARRAY => [TypeScriptType::array(), TypeScriptType::ANY],
-            Types::SMALLINT => TypeScriptType::NUMBER,
-            Types::STRING => TypeScriptType::STRING,
-            Types::TEXT => TypeScriptType::STRING,
-            Types::TIME_MUTABLE => TypeScriptType::NUMBER,
-            Types::TIME_IMMUTABLE => TypeScriptType::NUMBER,
+            'array', 'json', 'jsonb', 'varchar', 'text', 'date', 'datetime', 'timestamp', 'time' => TypeScriptType::STRING,
+            'int8', 'int2', 'int4', 'float8', 'numeric' => TypeScriptType::NUMBER,
+            'bool' => TypeScriptType::BOOLEAN,
             default => TypeScriptType::ANY,
         };
     }
