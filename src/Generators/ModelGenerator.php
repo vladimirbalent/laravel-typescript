@@ -51,7 +51,9 @@ class ModelGenerator extends AbstractGenerator
     {
         $this->model = $this->reflection->newInstance();
 
-        $this->columns = collect(Schema::getColumns($this->model->getTable()));
+        $this->columns = collect(
+            Schema::connection($this->model->getConnectionName())->getColumns($this->model->getTable())
+        );
     }
 
     protected function getProperties(): string
